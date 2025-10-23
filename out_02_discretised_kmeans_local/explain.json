@@ -1,0 +1,52 @@
+{
+  "classification_report": {
+    "0": {
+      "precision": 1.0,
+      "recall": 0.9966555183946488,
+      "f1-score": 0.998324958123953,
+      "support": 299.0
+    },
+    "1": {
+      "precision": 1.0,
+      "recall": 0.9914529914529915,
+      "f1-score": 0.9957081545064378,
+      "support": 117.0
+    },
+    "2": {
+      "precision": 0.9767441860465116,
+      "recall": 1.0,
+      "f1-score": 0.9882352941176471,
+      "support": 84.0
+    },
+    "accuracy": 0.996,
+    "macro avg": {
+      "precision": 0.9922480620155039,
+      "recall": 0.9960361699492134,
+      "f1-score": 0.9940894689160126,
+      "support": 500.0
+    },
+    "weighted avg": {
+      "precision": 0.996093023255814,
+      "recall": 0.996,
+      "f1-score": 0.9960175625243951,
+      "support": 500.0
+    }
+  },
+  "feature_importances": [
+    0.4011540986053663,
+    0.01701039647927155,
+    0.15734956716027834,
+    0.009817042054711976,
+    0.05546869368302308,
+    0.35920020201734865
+  ],
+  "feature_names": [
+    "ACTUAL_CLTV",
+    "CURRENT_YEAR_FAP",
+    "FUTURE_LIFETIME_VALUE",
+    "ACTUAL_LIFETIME_DURATION",
+    "NUM_CROSS_SOLD_LY",
+    "CLM_OVER_PROFIT_HITCOUNT"
+  ],
+  "shap_error": "only integer scalar arrays can be converted to a scalar index"
+}
