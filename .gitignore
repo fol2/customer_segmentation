@@ -47,7 +47,6 @@ env/
 *.ipynb
 
 # Data files (CSV, Parquet, Excel)
-*.csv
 *.parquet
 *.xlsx
 *.xls
@@ -59,12 +58,12 @@ env/
 *.h5
 *.hdf5
 
-# Output directories
-out*/
-output*/
-results*/
-sweep*/
-reports/
+# Data directories (ignore input data, keep output folders)
+data/
+Data/
+DATA/
+
+# Log files
 *.log
 
 # Environment variables

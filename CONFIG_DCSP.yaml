@@ -1,0 +1,56 @@
+# ============================================================================
+# DCSP (Digital) Configuration
+# ============================================================================
+# Optimized for Digital customer segmentation using continuous recipe
+# with standard scaling and HDBSCAN/KMeans auto-selection.
+#
+# Usage:
+#   ukplc-seg --input /data/DCSP_export.parquet --outdir ./out_dcsp --config CONFIG_DCSP.yaml
+# ============================================================================
+
+recipe: continuous
+algorithm: auto
+k_min: 4
+k_max: 12
+k_select: silhouette
+random_state: 42
+scaler: standard
+log1p:
+  - ACTUAL_CLTV
+  - FUTURE_LIFETIME_VALUE
+
+# HDBSCAN parameters (preferred for continuous)
+hdbscan_min_cluster_size: 100
+hdbscan_min_samples: null
+
+# Identity column
+id_col: CUSTOMER_ID
+
+# Performance features (clustering inputs)
+features:
+  - ACTUAL_CLTV
+  - CURRENT_YEAR_FAP
+  - FUTURE_LIFETIME_VALUE
+  - ACTUAL_LIFETIME_DURATION
+  - NUM_CROSS_SOLD_LY
+  - CLM_OVER_PROFIT_HITCOUNT
+
+# Explanatory columns (profiling only)
+explanatory:
+  - CUSTOMER_SEGMENT
+  - CUSTOMER_PORTFOLIO
+  - ACTIVE_CUSTOMER
+  - CURRENT_GWP
+  - LAST_YEAR_GWP
+  - GEP_FIN_FULL
+  - GEC_FIN_FULL
+  - CLM_INC_FULL
+  - WEIGHTED_PLAN_LOSS_RATIO
+  - ACTUAL_LOSS_RATIO
+  - EXPECTED_LIFETIME_VALUE
+  - TOTAL_SCORE
+  - INSP_FLAG
+
+# Typical DCSP filters (apply via CLI):
+# --filter CUSTOMER_PORTFOLIO=DIGITAL
+# --filter ACTIVE_CUSTOMER=Y

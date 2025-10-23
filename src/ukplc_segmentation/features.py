@@ -12,6 +12,15 @@ from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, RobustScaler, StandardScaler, KBinsDiscretizer, FunctionTransformer
 
+# Picklable transformation functions (cannot use lambdas)
+def clip_to_non_negative(X):
+    """Clip values to be non-negative (for log1p preprocessing)."""
+    return np.maximum(X, 0)
+
+def log1p_transform(X):
+    """Apply log1p transformation."""
+    return np.log1p(X)
+
 # Default feature names (aligned to UKPLC_CLTV_CSP_MV output columns)
 DEFAULT_NUMERIC_FEATURES = [
     "ACTUAL_CLTV",
@@ -94,7 +103,8 @@ def build_continuous_pipeline(cfg: FeatureConfig) -> Tuple[Pipeline, List[str]]:
             "log_num",
             Pipeline(steps=[
                 ("impute", SimpleImputer(strategy="median")),
-                ("log1p", FunctionTransformer(lambda x: __import__('numpy').log1p(x), validate=False)),
+                ("clip", FunctionTransformer(clip_to_non_negative, validate=False)),
+                ("log1p", FunctionTransformer(log1p_transform, validate=False)),
                 ("scale", scaler),
             ]),
             log_cols,
@@ -119,7 +129,7 @@ def build_discretised_pipeline(cfg: FeatureConfig) -> Tuple[Pipeline, List[str]]
         transformers.append((
             "num_disc",
             Pipeline(steps=[
-                ("impute", SimpleImputer(strategy="most_frequent")),
+                ("impute", SimpleImputer(strategy="median")),
                 ("disc", disc),
                 ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
             ]), other_cols))
@@ -127,8 +137,9 @@ def build_discretised_pipeline(cfg: FeatureConfig) -> Tuple[Pipeline, List[str]]
         transformers.append((
             "log_disc",
             Pipeline(steps=[
-                ("impute", SimpleImputer(strategy="most_frequent")),
-                ("log1p", FunctionTransformer(lambda x: __import__('numpy').log1p(x), validate=False)),
+                ("impute", SimpleImputer(strategy="median")),
+                ("clip", FunctionTransformer(clip_to_non_negative, validate=False)),
+                ("log1p", FunctionTransformer(log1p_transform, validate=False)),
                 ("disc", disc),
                 ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
             ]), log_cols))

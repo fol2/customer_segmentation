@@ -103,6 +103,9 @@ def main():
     # Optional exclude inspection-only
     if args.exclude_inspection_only and ("INSP_FLAG" in df.columns):
         df = df[df["INSP_FLAG"].astype(str).str.upper() != "Y"].copy()
+        print(f"      After filters: {len(df):,} rows remaining")
+    else:
+        print(f"      After filters: {len(df):,} rows")
 
     # Features from YAML override if present
     features_list = yaml_features if yaml_features else [c for c in DEFAULT_FEATURES if c in df.columns]
@@ -113,6 +116,7 @@ def main():
     if args.log1p:
         log_cols = [c.strip() for c in args.log1p.split(",") if c.strip()]
 
+    print(f"[4/9] Building feature pipeline (recipe={args.recipe})...")
     fcfg = FeatureConfig(
         numeric_features=[c for c in features_list if c in df.columns],
         explanatory_columns=[c for c in explanatory_list if c in df.columns],
@@ -123,9 +127,14 @@ def main():
         log1p_columns=log_cols,
     )
     pipe, feature_names = build_feature_pipeline(fcfg)
+    print(f"[5/9] Transforming features ({len(fcfg.numeric_features)} features)...")
     X = pipe.fit_transform(df)
+    print(f"      Feature matrix: {X.shape[0]:,} rows × {X.shape[1]} columns")
 
     # Fit clustering
+    print(f"[6/9] Fitting clustering model (algorithm={args.algorithm})...")
+    if args.algorithm in ['kmeans', 'auto'] and args.k_min != args.k_max:
+        print(f"      Testing k from {args.k_min} to {args.k_max}...")
     ccfg = ClusterConfig(
         algorithm=args.algorithm,
         k_min=args.k_min,
@@ -136,8 +145,10 @@ def main():
         k_select=args.k_select,
     )
     model, labels = fit_cluster_model(X, ccfg)
+    print(f"      Clustering complete! Found {len(set(labels))} clusters")
 
     # Metrics
+    print(f"[7/9] Computing metrics...")
     metrics = compute_internal_metrics(X, labels)
     metrics_json = {
         "n_clusters": metrics.n_clusters,
@@ -150,14 +161,17 @@ def main():
     prof = cluster_profile_table(df, labels, fcfg.explanatory_columns, fcfg.numeric_features)
 
     # Save artefacts
+    print(f"[8/9] Saving outputs to {outdir}...")
     id_col = args.id_col if args.id_col in df.columns else "CUSTOMER_ID"
     assignments = pd.DataFrame({id_col: df.get(id_col, pd.Series(range(len(df)))),
                                 "cluster": labels})
     save_csv(assignments, outdir / "cluster_assignments.csv")
     save_csv(prof, outdir / "cluster_profiles.csv")
     save_json(metrics_json, outdir / "internal_metrics.json")
+    print(f"      Saving model.joblib (this may take a moment)...")
     dump({"pipeline": pipe, "cluster_model": model, "feature_names": feature_names},
          outdir / "model.joblib")
+    print(f"      Model saved successfully")
 
     # Quick visual: cluster sizes
     fig, ax = plt.subplots()
@@ -168,10 +182,12 @@ def main():
     save_fig(fig, outdir / "cluster_sizes.png")
 
     # Explainability
+    print(f"[9/9] Generating explanations...")
     explain = {}
     if not args.disable_shap:
+        print(f"      Computing SHAP values (this may take 1-2 minutes)...")
         try:
-            from .features import build_feature_pipeline  # ensure numeric representation for explain
+            # build_feature_pipeline already imported at top
             fcfg_explain = FeatureConfig(numeric_features=fcfg.numeric_features, explanatory_columns=fcfg.explanatory_columns, recipe="continuous",
                                          scaler=args.scaler, log1p_columns=log_cols)
             pipe_explain, feat_names_explain = build_feature_pipeline(fcfg_explain)

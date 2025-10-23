@@ -1,0 +1,182 @@
+# ============================================================================
+# UKPLC Segmentation Configuration
+# ============================================================================
+# This YAML file configures clustering parameters for both CSP (Mid-Market)
+# and DCSP (Digital) customer segmentation runs. CLI arguments override these.
+#
+# Usage:
+#   ukplc-seg --input /data/CSP_export.csv --outdir ./out_csp --config CONFIG.yaml
+#
+# See UKPLC_Segmentation_Operations_Guide.md for full documentation.
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# FEATURE ENGINEERING RECIPE
+# ----------------------------------------------------------------------------
+# continuous:   impute → log1p (optional) → scaling → clustering
+#               Best for: HDBSCAN, density-based patterns, continuous metrics
+#
+# discretised:  impute → log1p (optional) → quantile binning → one-hot → KMeans
+#               Best for: Case-study style segments, robust to outliers
+# ----------------------------------------------------------------------------
+recipe: continuous
+
+# ----------------------------------------------------------------------------
+# CLUSTERING ALGORITHM
+# ----------------------------------------------------------------------------
+# auto:         Try HDBSCAN first; fallback to KMeans with auto-k if needed
+# kmeans:       Force KMeans with auto-k selection
+# hdbscan:      Force HDBSCAN (requires hdbscan package)
+# agglomerative: Hierarchical clustering with auto-k
+# ----------------------------------------------------------------------------
+algorithm: auto
+
+# ----------------------------------------------------------------------------
+# AUTO K-SELECTION (for KMeans/Agglomerative)
+# ----------------------------------------------------------------------------
+k_min: 3              # Minimum number of clusters to test
+k_max: 12             # Maximum number of clusters to test
+k_select: composite   # Selection criterion: 'composite' or 'silhouette'
+                      # composite = silhouette + (calinski_harabasz/10000) - davies_bouldin
+                      # silhouette = pure silhouette score
+
+# ----------------------------------------------------------------------------
+# DISCRETISED RECIPE PARAMETERS
+# ----------------------------------------------------------------------------
+n_bins: 7             # Number of quantile bins for discretised recipe
+                      # Case study used 7 bins; adjust based on data distribution
+
+# ----------------------------------------------------------------------------
+# SCALING (for continuous recipe)
+# ----------------------------------------------------------------------------
+scaler: robust        # Scaling method: 'robust', 'standard', or 'none'
+                      # robust: RobustScaler (median/IQR, handles outliers better)
+                      # standard: StandardScaler (mean/std)
+                      # none: No scaling (not recommended)
+
+# ----------------------------------------------------------------------------
+# LOG TRANSFORMATION (heavy-tailed features)
+# ----------------------------------------------------------------------------
+log1p:
+  - ACTUAL_CLTV
+  - FUTURE_LIFETIME_VALUE
+# Applies log1p before scaling/binning to stabilize heavy tails
+# Add other features if they show extreme skewness
+
+# ----------------------------------------------------------------------------
+# HDBSCAN PARAMETERS (only used if algorithm = auto or hdbscan)
+# ----------------------------------------------------------------------------
+hdbscan_min_cluster_size: 100   # Minimum points per cluster
+hdbscan_min_samples: null       # Min samples in neighborhood (null = auto)
+                                # Increase if too many noise points (-1)
+                                # Decrease if too few clusters
+
+# ----------------------------------------------------------------------------
+# REPRODUCIBILITY
+# ----------------------------------------------------------------------------
+random_state: 42      # Fixed seed for reproducibility
+
+# ----------------------------------------------------------------------------
+# IDENTIFIER COLUMN
+# ----------------------------------------------------------------------------
+id_col: CUSTOMER_ID   # Column name for customer identifier in output
+
+# ----------------------------------------------------------------------------
+# PERFORMANCE FEATURES (used for clustering)
+# ----------------------------------------------------------------------------
+# These 6 features are the core CSP/DCSP performance inputs.
+# DO NOT add explanatory columns here - they belong in 'explanatory' section.
+# ----------------------------------------------------------------------------
+features:
+  - ACTUAL_CLTV
+  - CURRENT_YEAR_FAP
+  - FUTURE_LIFETIME_VALUE
+  - ACTUAL_LIFETIME_DURATION
+  - NUM_CROSS_SOLD_LY
+  - CLM_OVER_PROFIT_HITCOUNT
+
+# ----------------------------------------------------------------------------
+# EXPLANATORY COLUMNS (NOT used for clustering, only for profiling)
+# ----------------------------------------------------------------------------
+# These columns appear in cluster_profiles.csv for interpretation.
+# They describe clusters AFTER formation but don't influence clustering.
+# ----------------------------------------------------------------------------
+explanatory:
+  - CUSTOMER_SEGMENT          # Existing segment (for cross-tab)
+  - CUSTOMER_PORTFOLIO        # MID / DIGITAL
+  - ACTIVE_CUSTOMER           # Y/N flag
+  - CURRENT_GWP               # Current Gross Written Premium
+  - LAST_YEAR_GWP             # Last Year GWP
+  - GEP_FIN_FULL              # Gross Earned Premium
+  - GEC_FIN_FULL              # Gross Earned Commission
+  - CLM_INC_FULL              # Claims Incurred
+  - WEIGHTED_PLAN_LOSS_RATIO  # FAP-weighted plan loss ratio
+  - ACTUAL_LOSS_RATIO         # Actual loss ratio
+  - EXPECTED_LIFETIME_VALUE   # ACTUAL_CLTV + FUTURE_LIFETIME_VALUE
+  - TOTAL_SCORE               # Composite score (if present)
+  - INSP_FLAG                 # Inspection-only flag
+
+# ----------------------------------------------------------------------------
+# FILTERING (optional - usually done via CLI for flexibility)
+# ----------------------------------------------------------------------------
+# Uncomment and modify to apply filters:
+# filters:
+#   - CUSTOMER_PORTFOLIO=MID
+#   - ACTIVE_CUSTOMER=Y
+
+# ----------------------------------------------------------------------------
+# INSPECTION HANDLING
+# ----------------------------------------------------------------------------
+# exclude_inspection_only: false   # Default: include inspection customers
+                                    # Set to true to exclude INSP_FLAG='Y'
+
+# ----------------------------------------------------------------------------
+# PERFORMANCE TUNING
+# ----------------------------------------------------------------------------
+# rows_limit: 10000              # Uncomment for quick dry-run with subset
+# disable_shap: false            # Set to true to skip SHAP (faster)
+
+# ============================================================================
+# RECIPE-SPECIFIC EXAMPLES
+# ============================================================================
+
+# --- CSP (Mid-Market) Example ---
+# Typically uses discretised recipe with 7 bins:
+#
+# recipe: discretised
+# algorithm: auto
+# n_bins: 7
+# k_select: composite
+# scaler: robust
+# log1p: [ACTUAL_CLTV, FUTURE_LIFETIME_VALUE]
+#
+# Run with:
+# ukplc-seg --input /data/CSP_export.csv --outdir ./out_csp --config CONFIG.yaml
+
+# --- DCSP (Digital) Example ---
+# Typically uses continuous recipe with standard scaling:
+#
+# recipe: continuous
+# algorithm: auto
+# k_min: 4
+# k_max: 12
+# k_select: silhouette
+# scaler: standard
+# log1p: [ACTUAL_CLTV, FUTURE_LIFETIME_VALUE]
+#
+# Run with:
+# ukplc-seg --input /data/DCSP_export.parquet --outdir ./out_dcsp --config CONFIG.yaml
+
+# ============================================================================
+# NOTES
+# ============================================================================
+# 1. CLI arguments ALWAYS override YAML values
+# 2. Use --filter repeatedly on CLI for dynamic filtering:
+#    --filter CUSTOMER_PORTFOLIO=MID --filter ACTIVE_CUSTOMER=Y
+# 3. Parameter sweep ignores config file - use CLI for sweeps
+# 4. HDBSCAN may produce noise points (cluster = -1); these are excluded
+#    from silhouette calculations but included in output assignments
+# 5. For heavy-tailed distributions, always use log1p on CLTV/FLV
+# 6. Composite k-select works well for balanced trade-offs; use silhouette
+#    for purer cluster separation
+# ============================================================================

@@ -1,0 +1,58 @@
+# ============================================================================
+# CSP (Mid-Market) Configuration
+# ============================================================================
+# Optimized for Mid-Market customer segmentation using discretised recipe
+# with quantile binning (case-study approach).
+#
+# Usage:
+#   ukplc-seg --input /data/CSP_export.csv --outdir ./out_csp --config CONFIG_CSP.yaml
+# ============================================================================
+
+recipe: discretised
+algorithm: auto
+k_min: 3
+k_max: 12
+k_select: composite
+n_bins: 7
+random_state: 42
+scaler: robust
+log1p:
+  - ACTUAL_CLTV
+  - FUTURE_LIFETIME_VALUE
+
+# HDBSCAN parameters (fallback if discretised fails)
+hdbscan_min_cluster_size: 100
+hdbscan_min_samples: null
+
+# Identity column
+id_col: CUSTOMER_ID
+
+# Performance features (clustering inputs)
+features:
+  - ACTUAL_CLTV
+  - CURRENT_YEAR_FAP
+  - FUTURE_LIFETIME_VALUE
+  - ACTUAL_LIFETIME_DURATION
+  - NUM_CROSS_SOLD_LY
+  - CLM_OVER_PROFIT_HITCOUNT
+
+# Explanatory columns (profiling only)
+explanatory:
+  - CUSTOMER_SEGMENT
+  - CUSTOMER_PORTFOLIO
+  - ACTIVE_CUSTOMER
+  - CURRENT_GWP
+  - LAST_YEAR_GWP
+  - GEP_FIN_FULL
+  - GEC_FIN_FULL
+  - CLM_INC_FULL
+  - WEIGHTED_PLAN_LOSS_RATIO
+  - ACTUAL_LOSS_RATIO
+  - EXPECTED_LIFETIME_VALUE
+  - TOTAL_SCORE
+  - INSP_FLAG
+
+# Typical CSP filters (apply via CLI):
+# --filter CUSTOMER_PORTFOLIO=MID
+# --filter ACTIVE_CUSTOMER=Y
+# --exclude-inspection-only (if needed)
