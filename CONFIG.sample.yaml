@@ -1,0 +1,31 @@
+
+# Example configuration for ukplc-seg (values can be overridden by CLI)
+recipe: continuous
+algorithm: auto
+k_min: 3
+k_max: 12
+k_select: composite
+n_bins: 7
+random_state: 42
+scaler: robust
+log1p: [ACTUAL_CLTV, FUTURE_LIFETIME_VALUE]
+features:
+  - ACTUAL_CLTV
+  - CURRENT_YEAR_FAP
+  - FUTURE_LIFETIME_VALUE
+  - ACTUAL_LIFETIME_DURATION
+  - NUM_CROSS_SOLD_LY
+  - CLM_OVER_PROFIT_HITCOUNT
+explanatory:
+  - CUSTOMER_SEGMENT
+  - CUSTOMER_PORTFOLIO
+  - ACTIVE_CUSTOMER
+  - CURRENT_GWP
+  - LAST_YEAR_GWP
+  - GEP_FIN_FULL
+  - GEC_FIN_FULL
+  - CLM_INC_FULL
+  - WEIGHTED_PLAN_LOSS_RATIO
+  - ACTUAL_LOSS_RATIO
+  - EXPECTED_LIFETIME_VALUE
+  - TOTAL_SCORE

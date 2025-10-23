@@ -1,0 +1,146 @@
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import List, Tuple
+
+import numpy as np
+import pandas as pd
+from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.compose import ColumnTransformer
+from sklearn.impute import SimpleImputer
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder, RobustScaler, StandardScaler, KBinsDiscretizer, FunctionTransformer
+
+# Default feature names (aligned to UKPLC_CLTV_CSP_MV output columns)
+DEFAULT_NUMERIC_FEATURES = [
+    "ACTUAL_CLTV",
+    "CURRENT_YEAR_FAP",
+    "FUTURE_LIFETIME_VALUE",
+    "ACTUAL_LIFETIME_DURATION",
+    "NUM_CROSS_SOLD_LY",
+    "CLM_OVER_PROFIT_HITCOUNT",
+]
+
+# Optional columns used only for profiling/explanation (not for clustering)
+DEFAULT_EXPLANATORY_COLUMNS = [
+    "CUSTOMER_SEGMENT",
+    "CUSTOMER_PORTFOLIO",
+    "ACTIVE_CUSTOMER",
+    "CURRENT_GWP",
+    "LAST_YEAR_GWP",
+    "GEP_FIN_FULL",
+    "GEC_FIN_FULL",
+    "CLM_INC_FULL",
+    "WEIGHTED_PLAN_LOSS_RATIO",
+    "ACTUAL_LOSS_RATIO",
+    "EXPECTED_LIFETIME_VALUE",
+    "TOTAL_SCORE",
+]
+
+@dataclass
+class FeatureConfig:
+    numeric_features: List[str] = None
+    explanatory_columns: List[str] = None
+    recipe: str = "continuous"  # "continuous" or "discretised"
+    n_bins: int = 7  # for discretised recipe
+    random_state: int = 42
+    scaler: str = "robust"  # "robust", "standard", "none"
+    log1p_columns: List[str] | None = None
+
+    def __post_init__(self):
+        if self.numeric_features is None:
+            self.numeric_features = list(DEFAULT_NUMERIC_FEATURES)
+        if self.explanatory_columns is None:
+            self.explanatory_columns = list(DEFAULT_EXPLANATORY_COLUMNS)
+        if self.log1p_columns is None:
+            self.log1p_columns = []
+
+class IdentityTransformer(BaseEstimator, TransformerMixin):
+    def fit(self, X, y=None):  # pragma: no cover
+        return self
+    def transform(self, X):  # pragma: no cover
+        return X
+
+def _pick_scaler(name: str):
+    if name == "standard":
+        return StandardScaler(with_mean=True, with_std=True)
+    if name == "none":
+        return IdentityTransformer()
+    return RobustScaler(with_centering=True, with_scaling=True)
+
+def build_continuous_pipeline(cfg: FeatureConfig) -> Tuple[Pipeline, List[str]]:
+    """
+    Impute + optional log1p + scaling for numeric features.
+    """
+    num_features = cfg.numeric_features
+    log_cols = [c for c in (cfg.log1p_columns or []) if c in num_features]
+    other_cols = [c for c in num_features if c not in log_cols]
+
+    scaler = _pick_scaler(cfg.scaler)
+
+    transformers = []
+    if other_cols:
+        transformers.append((
+            "num",
+            Pipeline(steps=[
+                ("impute", SimpleImputer(strategy="median")),
+                ("scale", scaler),
+            ]),
+            other_cols,
+        ))
+    if log_cols:
+        transformers.append((
+            "log_num",
+            Pipeline(steps=[
+                ("impute", SimpleImputer(strategy="median")),
+                ("log1p", FunctionTransformer(lambda x: __import__('numpy').log1p(x), validate=False)),
+                ("scale", scaler),
+            ]),
+            log_cols,
+        ))
+
+    pre = ColumnTransformer(transformers=transformers, remainder="drop")
+    pipe = Pipeline(steps=[("preprocess", pre)])
+    return pipe, num_features
+
+def build_discretised_pipeline(cfg: FeatureConfig) -> Tuple[Pipeline, List[str]]:
+    """
+    Case-study style: quantile discretisation per feature to ordinal bins (e.g., 7 bins),
+    optional log1p prior to binning, then one-hot encode the ordinal categories.
+    """
+    num_features = cfg.numeric_features
+    log_cols = [c for c in (cfg.log1p_columns or []) if c in num_features]
+    other_cols = [c for c in num_features if c not in log_cols]
+    disc = KBinsDiscretizer(n_bins=cfg.n_bins, encode="ordinal", strategy="quantile")
+
+    transformers = []
+    if other_cols:
+        transformers.append((
+            "num_disc",
+            Pipeline(steps=[
+                ("impute", SimpleImputer(strategy="most_frequent")),
+                ("disc", disc),
+                ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
+            ]), other_cols))
+    if log_cols:
+        transformers.append((
+            "log_disc",
+            Pipeline(steps=[
+                ("impute", SimpleImputer(strategy="most_frequent")),
+                ("log1p", FunctionTransformer(lambda x: __import__('numpy').log1p(x), validate=False)),
+                ("disc", disc),
+                ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
+            ]), log_cols))
+
+    pre = ColumnTransformer(transformers=transformers, remainder="drop")
+    pipe = Pipeline(steps=[("preprocess", pre)])
+    return pipe, num_features
+
+def build_feature_pipeline(cfg: FeatureConfig) -> Tuple[Pipeline, List[str]]:
+    if cfg.recipe == "continuous":
+        return build_continuous_pipeline(cfg)
+    elif cfg.recipe == "discretised":
+        return build_discretised_pipeline(cfg)
+    else:
+        raise ValueError(f"Unknown recipe: {cfg.recipe}")
