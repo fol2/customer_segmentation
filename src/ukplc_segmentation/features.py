@@ -11,6 +11,7 @@ from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, RobustScaler, StandardScaler, KBinsDiscretizer, FunctionTransformer
+from sklearn.decomposition import TruncatedSVD
 
 # Picklable transformation functions (cannot use lambdas)
 def clip_to_non_negative(X):
@@ -56,6 +57,7 @@ class FeatureConfig:
     random_state: int = 42
     scaler: str = "robust"  # "robust", "standard", "none"
     log1p_columns: List[str] | None = None
+    svd_components: int | None = None  # None means no SVD, used in discretised recipe
 
     def __post_init__(self):
         if self.numeric_features is None:
@@ -118,11 +120,15 @@ def build_discretised_pipeline(cfg: FeatureConfig) -> Tuple[Pipeline, List[str]]
     """
     Case-study style: quantile discretisation per feature to ordinal bins (e.g., 7 bins),
     optional log1p prior to binning, then one-hot encode the ordinal categories.
+    Optionally applies TruncatedSVD for dimensionality reduction after one-hot encoding.
     """
     num_features = cfg.numeric_features
     log_cols = [c for c in (cfg.log1p_columns or []) if c in num_features]
     other_cols = [c for c in num_features if c not in log_cols]
     disc = KBinsDiscretizer(n_bins=cfg.n_bins, encode="ordinal", strategy="quantile")
+
+    # Use sparse_output=True when SVD is enabled for memory efficiency
+    sparse_out = cfg.svd_components is not None
 
     transformers = []
     if other_cols:
@@ -131,7 +137,7 @@ def build_discretised_pipeline(cfg: FeatureConfig) -> Tuple[Pipeline, List[str]]
             Pipeline(steps=[
                 ("impute", SimpleImputer(strategy="median")),
                 ("disc", disc),
-                ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
+                ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=sparse_out)),
             ]), other_cols))
     if log_cols:
         transformers.append((
@@ -141,11 +147,19 @@ def build_discretised_pipeline(cfg: FeatureConfig) -> Tuple[Pipeline, List[str]]
                 ("clip", FunctionTransformer(clip_to_non_negative, validate=False)),
                 ("log1p", FunctionTransformer(log1p_transform, validate=False)),
                 ("disc", disc),
-                ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
+                ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=sparse_out)),
             ]), log_cols))
 
     pre = ColumnTransformer(transformers=transformers, remainder="drop")
-    pipe = Pipeline(steps=[("preprocess", pre)])
+
+    # Build pipeline steps
+    steps = [("preprocess", pre)]
+
+    # Add SVD step if configured
+    if cfg.svd_components:
+        steps.append(("svd", TruncatedSVD(n_components=cfg.svd_components, random_state=cfg.random_state)))
+
+    pipe = Pipeline(steps=steps)
     return pipe, num_features
 
 def build_feature_pipeline(cfg: FeatureConfig) -> Tuple[Pipeline, List[str]]:

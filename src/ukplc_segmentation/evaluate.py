@@ -15,7 +15,38 @@ class EvaluationResult:
     calinski_harabasz: Optional[float]
     davies_bouldin: Optional[float]
 
-def compute_internal_metrics(X: np.ndarray, labels: np.ndarray) -> EvaluationResult:
+def silhouette_sampled(X: np.ndarray, labels: np.ndarray, sample_size: int = 15000, random_state: int = 42) -> float:
+    """
+    Compute silhouette score on a sample of rows to speed up evaluation.
+
+    Args:
+        X: Feature matrix
+        labels: Cluster labels
+        sample_size: Maximum number of samples to use (default 15000)
+        random_state: Random seed for reproducibility
+
+    Returns:
+        Silhouette score computed on sampled data
+    """
+    n = X.shape[0]
+    if n > sample_size:
+        rng = np.random.default_rng(random_state)
+        idx = rng.choice(n, size=sample_size, replace=False)
+        return silhouette_score(X[idx], labels[idx])
+    return silhouette_score(X, labels)
+
+def compute_internal_metrics(X: np.ndarray, labels: np.ndarray, sample_size: Optional[int] = None) -> EvaluationResult:
+    """
+    Compute internal clustering metrics.
+
+    Args:
+        X: Feature matrix
+        labels: Cluster labels
+        sample_size: If specified, sample this many rows for silhouette computation (default: None, use all rows)
+
+    Returns:
+        EvaluationResult with silhouette, Calinski-Harabasz, and Davies-Bouldin scores
+    """
     unique = set(labels)
     # Handle HDBSCAN noise label -1 by ignoring it for metrics if it dominates
     mask = labels != -1 if (-1 in unique and len(unique) > 1) else np.ones_like(labels, dtype=bool)
@@ -23,7 +54,13 @@ def compute_internal_metrics(X: np.ndarray, labels: np.ndarray) -> EvaluationRes
     y_eval = labels[mask]
     if len(set(y_eval)) < 2:
         return EvaluationResult(n_clusters=len(set(labels)), silhouette=None, calinski_harabasz=None, davies_bouldin=None)
-    sil = silhouette_score(X_eval, y_eval)
+
+    # Use sampled silhouette if sample_size is specified, otherwise compute on full data
+    if sample_size is not None:
+        sil = silhouette_sampled(X_eval, y_eval, sample_size=sample_size)
+    else:
+        sil = silhouette_score(X_eval, y_eval)
+
     ch = calinski_harabasz_score(X_eval, y_eval)
     db = davies_bouldin_score(X_eval, y_eval)
     return EvaluationResult(n_clusters=len(set(labels)) - (1 if -1 in unique else 0),

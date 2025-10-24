@@ -1,0 +1,88 @@
+{
+  "classification_report": {
+    "0": {
+      "precision": 0.9862385321100917,
+      "recall": 0.9862385321100917,
+      "f1-score": 0.9862385321100917,
+      "support": 218.0
+    },
+    "1": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 2.0
+    },
+    "2": {
+      "precision": 0.9682539682539683,
+      "recall": 1.0,
+      "f1-score": 0.9838709677419355,
+      "support": 61.0
+    },
+    "3": {
+      "precision": 0.9285714285714286,
+      "recall": 0.9285714285714286,
+      "f1-score": 0.9285714285714286,
+      "support": 14.0
+    },
+    "4": {
+      "precision": 0.8666666666666667,
+      "recall": 0.8863636363636364,
+      "f1-score": 0.8764044943820225,
+      "support": 44.0
+    },
+    "5": {
+      "precision": 0.9649122807017544,
+      "recall": 0.9649122807017544,
+      "f1-score": 0.9649122807017544,
+      "support": 57.0
+    },
+    "6": {
+      "precision": 0.9459459459459459,
+      "recall": 0.8974358974358975,
+      "f1-score": 0.9210526315789473,
+      "support": 39.0
+    },
+    "7": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 31.0
+    },
+    "8": {
+      "precision": 0.8787878787878788,
+      "recall": 0.8529411764705882,
+      "f1-score": 0.8656716417910447,
+      "support": 34.0
+    },
+    "accuracy": 0.96,
+    "macro avg": {
+      "precision": 0.9488196334486371,
+      "recall": 0.9462736612948218,
+      "f1-score": 0.9474135529863583,
+      "support": 500.0
+    },
+    "weighted avg": {
+      "precision": 0.9599350103350103,
+      "recall": 0.96,
+      "f1-score": 0.959863630475083,
+      "support": 500.0
+    }
+  },
+  "feature_importances": [
+    0.14139538435624677,
+    0.07875564922635926,
+    0.013293569066525155,
+    0.1759980426651395,
+    0.30370816445738075,
+    0.2868491902283486
+  ],
+  "feature_names": [
+    "ACTUAL_CLTV",
+    "CURRENT_YEAR_FAP",
+    "FUTURE_LIFETIME_VALUE",
+    "ACTUAL_LIFETIME_DURATION",
+    "NUM_CROSS_SOLD_LY",
+    "CLM_OVER_PROFIT_HITCOUNT"
+  ],
+  "shap_error": "only integer scalar arrays can be converted to a scalar index"
+}

@@ -49,7 +49,7 @@ def parse_args():
     p.add_argument("--config", help="Optional YAML config to override CLI parameters.")
     p.add_argument("--recipe", choices=["continuous", "discretised"], default="continuous",
                    help="Feature engineering recipe.")
-    p.add_argument("--algorithm", choices=["auto", "kmeans", "hdbscan", "agglomerative"], default="auto",
+    p.add_argument("--algorithm", choices=["auto", "kmeans", "mbkmeans", "hdbscan", "agglomerative"], default="auto",
                    help="Clustering algorithm.")
     p.add_argument("--k-min", type=int, default=3)
     p.add_argument("--k-max", type=int, default=12)
@@ -65,6 +65,12 @@ def parse_args():
     p.add_argument("--hdbscan-min-cluster-size", type=int, default=100)
     p.add_argument("--hdbscan-min-samples", type=int, help="HDBSCAN min_samples; default None.")
     p.add_argument("--disable-shap", action="store_true", help="Skip SHAP to speed up runs.")
+    p.add_argument("--cast-float32", action="store_true", help="Cast numeric columns to float32 to reduce memory")
+    p.add_argument("--mbk-batch-size", type=int, default=8192, help="MiniBatchKMeans batch size")
+    p.add_argument("--mbk-max-iter", type=int, default=100, help="MiniBatchKMeans max iterations")
+    p.add_argument("--svd-components", type=int, help="TruncatedSVD components for discretised recipe (e.g., 24)")
+    p.add_argument("--silhouette-sample-size", type=int, default=15000, help="Sample size for silhouette computation")
+    p.add_argument("--kselect-sample-size", type=int, default=30000, help="Sample size for k-selection")
     return p.parse_args()
 
 def main():
@@ -78,6 +84,14 @@ def main():
 
     outdir = ensure_dir(args.outdir)
     df = load_dataset(args.input)
+
+    # Optional float32 casting to reduce memory
+    if args.cast_float32:
+        numeric_cols = df.select_dtypes(include=[np.number]).columns
+        for col in numeric_cols:
+            if df[col].dtype == np.float64:
+                df[col] = df[col].astype(np.float32)
+        print(f"      Cast {len(numeric_cols)} numeric columns to float32")
 
     # Optional row limit for quick tests
     if args.rows_limit:
@@ -125,6 +139,7 @@ def main():
         random_state=args.random_state,
         scaler=args.scaler,
         log1p_columns=log_cols,
+        svd_components=args.svd_components,
     )
     pipe, feature_names = build_feature_pipeline(fcfg)
     print(f"[5/9] Transforming features ({len(fcfg.numeric_features)} features)...")
@@ -143,13 +158,16 @@ def main():
         hdbscan_min_cluster_size=args.hdbscan_min_cluster_size,
         hdbscan_min_samples=args.hdbscan_min_samples,
         k_select=args.k_select,
+        mbk_batch_size=args.mbk_batch_size,
+        mbk_max_iter=args.mbk_max_iter,
+        k_select_sample_size=args.kselect_sample_size,
     )
     model, labels = fit_cluster_model(X, ccfg)
     print(f"      Clustering complete! Found {len(set(labels))} clusters")
 
     # Metrics
     print(f"[7/9] Computing metrics...")
-    metrics = compute_internal_metrics(X, labels)
+    metrics = compute_internal_metrics(X, labels, sample_size=args.silhouette_sample_size)
     metrics_json = {
         "n_clusters": metrics.n_clusters,
         "silhouette": metrics.silhouette,

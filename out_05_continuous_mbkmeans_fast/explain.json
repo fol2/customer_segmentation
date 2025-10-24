@@ -1,0 +1,70 @@
+{
+  "classification_report": {
+    "0": {
+      "precision": 0.9849246231155779,
+      "recall": 0.9949238578680203,
+      "f1-score": 0.98989898989899,
+      "support": 197.0
+    },
+    "1": {
+      "precision": 0.9841269841269841,
+      "recall": 1.0,
+      "f1-score": 0.992,
+      "support": 62.0
+    },
+    "2": {
+      "precision": 0.95,
+      "recall": 0.9637681159420289,
+      "f1-score": 0.9568345323741008,
+      "support": 138.0
+    },
+    "3": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 31.0
+    },
+    "4": {
+      "precision": 0.9310344827586207,
+      "recall": 0.7941176470588235,
+      "f1-score": 0.8571428571428571,
+      "support": 34.0
+    },
+    "5": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 38.0
+    },
+    "accuracy": 0.974,
+    "macro avg": {
+      "precision": 0.9750143483335304,
+      "recall": 0.9588016034781455,
+      "f1-score": 0.9659793965693245,
+      "support": 500.0
+    },
+    "weighted avg": {
+      "precision": 0.9736023923668699,
+      "recall": 0.974,
+      "f1-score": 0.9734002472411681,
+      "support": 500.0
+    }
+  },
+  "feature_importances": [
+    0.10170726085033652,
+    0.10710870232456476,
+    0.11627790127536516,
+    0.17562431061851136,
+    0.2550793878948872,
+    0.24420243703633498
+  ],
+  "feature_names": [
+    "ACTUAL_CLTV",
+    "CURRENT_YEAR_FAP",
+    "FUTURE_LIFETIME_VALUE",
+    "ACTUAL_LIFETIME_DURATION",
+    "NUM_CROSS_SOLD_LY",
+    "CLM_OVER_PROFIT_HITCOUNT"
+  ],
+  "shap_error": "only integer scalar arrays can be converted to a scalar index"
+}
