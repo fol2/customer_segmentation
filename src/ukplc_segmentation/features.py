@@ -11,7 +11,7 @@ from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, RobustScaler, StandardScaler, KBinsDiscretizer, FunctionTransformer
-from sklearn.decomposition import TruncatedSVD
+from sklearn.decomposition import TruncatedSVD, PCA
 
 # Picklable transformation functions (cannot use lambdas)
 def clip_to_non_negative(X):
@@ -58,6 +58,8 @@ class FeatureConfig:
     scaler: str = "robust"  # "robust", "standard", "none"
     log1p_columns: List[str] | None = None
     svd_components: int | None = None  # None means no SVD, used in discretised recipe
+    pca_whiten: bool = False  # PCA whitening for continuous recipe (orthogonalize feature space)
+    pca_variance: float = 0.95  # Variance to retain when whitening (0-1 range)
 
     def __post_init__(self):
         if self.numeric_features is None:
@@ -82,7 +84,10 @@ def _pick_scaler(name: str):
 
 def build_continuous_pipeline(cfg: FeatureConfig) -> Tuple[Pipeline, List[str]]:
     """
-    Impute + optional log1p + scaling for numeric features.
+    Impute + optional log1p + scaling + optional PCA whitening for numeric features.
+
+    PCA whitening orthogonalizes the feature space and equalizes variances, which can improve
+    cluster margin calculations and distance-based metrics, especially for elongated clusters.
     """
     num_features = cfg.numeric_features
     log_cols = [c for c in (cfg.log1p_columns or []) if c in num_features]
@@ -113,7 +118,24 @@ def build_continuous_pipeline(cfg: FeatureConfig) -> Tuple[Pipeline, List[str]]:
         ))
 
     pre = ColumnTransformer(transformers=transformers, remainder="drop")
-    pipe = Pipeline(steps=[("preprocess", pre)])
+
+    # Build pipeline steps
+    steps = [("preprocess", pre)]
+
+    # Add PCA whitening step if enabled
+    if cfg.pca_whiten:
+        # n_components can be float (variance to retain) or int (exact components)
+        # Using float value (0-1) retains that fraction of variance
+        steps.append((
+            "pca_whiten",
+            PCA(
+                n_components=cfg.pca_variance,
+                whiten=True,
+                random_state=cfg.random_state
+            )
+        ))
+
+    pipe = Pipeline(steps=steps)
     return pipe, num_features
 
 def build_discretised_pipeline(cfg: FeatureConfig) -> Tuple[Pipeline, List[str]]:

@@ -27,6 +27,7 @@ class ClusterConfig:
     mbk_batch_size: int = 8192
     mbk_max_iter: int = 100
     k_select_sample_size: Optional[int] = 30000  # Sample size for k-selection (None = use all data)
+    kmeans_n_init: int = 10  # KMeans n_init parameter (number of initializations)
 
 def silhouette_sampled(X: np.ndarray, labels: np.ndarray, sample_size: int = 30000, random_state: int = 42) -> float:
     """
@@ -72,7 +73,7 @@ def select_k(X: np.ndarray, cfg: ClusterConfig) -> Tuple[int, Dict[int, float]]:
         X_kselect = X[idx]
 
     for k in range(cfg.k_min, cfg.k_max + 1):
-        km = KMeans(n_clusters=k, n_init="auto", random_state=cfg.random_state)
+        km = KMeans(n_clusters=k, n_init=cfg.kmeans_n_init, random_state=cfg.random_state)
         labels = km.fit_predict(X_kselect)
         if len(set(labels)) < 2:
             score = -np.inf
@@ -105,14 +106,14 @@ def fit_cluster_model(X: np.ndarray, cfg: ClusterConfig):
         valid = [l for l in labels if l != -1]
         if len(set(labels)) <= 1 or len(set(valid)) < 2:
             k, _ = select_k(X, cfg)
-            km = KMeans(n_clusters=k, n_init="auto", random_state=cfg.random_state)
+            km = KMeans(n_clusters=k, n_init=cfg.kmeans_n_init, random_state=cfg.random_state)
             labels = km.fit_predict(X)
             return km, labels
         return clusterer, labels
 
     elif cfg.algorithm in ("kmeans", "auto"):
         k, _ = select_k(X, cfg)
-        km = KMeans(n_clusters=k, n_init="auto", random_state=cfg.random_state)
+        km = KMeans(n_clusters=k, n_init=cfg.kmeans_n_init, random_state=cfg.random_state)
         labels = km.fit_predict(X)
         return km, labels
 

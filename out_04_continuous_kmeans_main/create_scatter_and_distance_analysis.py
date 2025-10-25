@@ -51,9 +51,11 @@ df = df_original.merge(df_clusters, on="CUSTOMER_ID", how="inner")
 model_artifacts = joblib.load(RUN_DIR / "model.joblib")
 pipeline = model_artifacts['pipeline']
 kmeans_model = model_artifacts['cluster_model']
+cluster_centers = kmeans_model.cluster_centers_
 
 print(f"  Loaded {len(df):,} customers")
 print(f"  Clusters: {sorted(df['cluster'].unique())}")
+print(f"  K-means centers shape: {cluster_centers.shape}")
 
 # Performance features
 perf_features = [
@@ -81,53 +83,114 @@ print(f"  Original features: {X_raw.shape[1]}")
 print(f"  Transformed features: {X_transformed.shape[1]}")
 
 # ============================================================================
-# 3. Calculate Distances and Confidence Metrics
+# 3. Calculate Distances and Confidence Metrics (Vectorised, Calibrated)
 # ============================================================================
 print("\n[3/7] Calculating distances and confidence metrics...")
 
-# Get cluster centers from trained model
-cluster_centers = kmeans_model.cluster_centers_
+from numpy.linalg import norm
 
-# Calculate distance to assigned cluster center
-distances_to_center = np.zeros(len(df))
-for i in range(len(df)):
-    assigned_cluster = labels[i]
-    center = cluster_centers[assigned_cluster]
-    distances_to_center[i] = np.linalg.norm(X_transformed[i] - center)
+# Convert to float32 for memory efficiency
+X = X_transformed.astype("float32")
+C = kmeans_model.cluster_centers_.astype("float32")
+n, k = X.shape[0], C.shape[0]
 
-# Calculate distance to nearest other cluster
-distances_to_nearest_other = np.zeros(len(df))
-nearest_other_cluster = np.zeros(len(df), dtype=int)
-for i in range(len(df)):
-    assigned_cluster = labels[i]
-    min_dist = np.inf
-    nearest_cluster = -1
-    for c in range(len(cluster_centers)):
-        if c != assigned_cluster:
-            dist = np.linalg.norm(X_transformed[i] - cluster_centers[c])
-            if dist < min_dist:
-                min_dist = dist
-                nearest_cluster = c
-    distances_to_nearest_other[i] = min_dist
-    nearest_other_cluster[i] = nearest_cluster
+print(f"  Computing {n:,} × {k} distance matrix (vectorised)...")
 
-# Calculate confidence ratio (distance to nearest other / distance to assigned)
-confidence_ratio = distances_to_nearest_other / (distances_to_center + 1e-10)
+# (n,k) squared Euclidean distances in transformed space
+# Using broadcasting for speed
+diff = X[:, None, :] - C[None, :, :]
+d2 = (diff ** 2).sum(axis=2)                       # (n, k)
+first_idx = labels
+first_d2 = d2[np.arange(n), first_idx]
+
+# nearest-other cluster indices & distances
+# argpartition: O(k) selection for 2 smallest
+order2 = np.argpartition(d2, 2, axis=1)[:, :2]     # indices of 2 smallest per row (unsorted)
+# ensure first is the assigned cluster; pick the other as second
+second_idx = np.where(order2[:, 0] == first_idx, order2[:, 1], order2[:, 0])
+second_d2 = d2[np.arange(n), second_idx]
+
+print("  (1) Computing radius-normalised distances & margin...")
+# --- (1) radius-normalised distances & margin ---
+# robust radius per cluster: median of sqrt distance of in-cluster points
+radii = np.zeros(k, dtype="float32")
+for c in range(k):
+    idx = (first_idx == c)
+    if np.any(idx):
+        radii[c] = np.median(np.sqrt(d2[idx, c]))
+    else:
+        radii[c] = np.median(np.sqrt(first_d2))  # fallback
+eps = 1e-6
+
+d1_r = np.sqrt(first_d2) / (radii[first_idx] + eps)
+d2_r = np.sqrt(second_d2) / (radii[second_idx] + eps)
+margin_r = d2_r - d1_r  # >0 is better (inside cluster core relatively)
+
+print("  (2) Computing diagonal Mahalanobis distances...")
+# --- (2) diagonal Mahalanobis distances ---
+# per-cluster diagonal variance (regularised)
+variances = np.zeros((k, X.shape[1]), dtype="float32")
+for c in range(k):
+    idx = (first_idx == c)
+    if np.any(idx):
+        variances[c] = X[idx].var(axis=0, ddof=1) + 1e-6
+    else:
+        variances[c] = X.var(axis=0, ddof=1) + 1e-6
+
+d2_mahal = ((diff ** 2) / variances[None, :, :]).sum(axis=2)  # (n,k)
+d2M_first = d2_mahal[np.arange(n), first_idx]
+d2M_second = d2_mahal[np.arange(n), second_idx]
+
+print("  (3) Computing Soft K-means probabilities (calibrated)...")
+# --- (3) Soft K-means probabilities (calibrated) ---
+tau = 1.0  # temperature
+logits = - d2_mahal / (2.0 * tau)
+# subtract row max for numerical stability (log-sum-exp trick)
+logits = logits - logits.max(axis=1, keepdims=True)
+probs = np.exp(logits)
+probs = probs / probs.sum(axis=1, keepdims=True)
+confidence = probs.max(axis=1).astype("float32")
+alt_label = probs.argmax(axis=1).astype(int)       # soft-argmax (usually=labels)
+
+print("  (4) Computing geometric gap (top-2)...")
+# --- (4) geometric gap (top-2) ---
+gap_euclid = np.sqrt(second_d2) - np.sqrt(first_d2)
+gap_mahal  = np.sqrt(d2M_second) - np.sqrt(d2M_first)
 
 # Calculate silhouette scores
+print("  Computing silhouette scores...")
 silhouette_scores = silhouette_samples(X_transformed, labels)
 
-# Identify marginal customers (low confidence)
-# Criteria: low silhouette score OR small confidence ratio
-marginal_threshold_silhouette = 0.2
-marginal_threshold_ratio = 1.5
-is_marginal = (silhouette_scores < marginal_threshold_silhouette) | (confidence_ratio < marginal_threshold_ratio)
+print("  Applying cluster-adaptive marginal detection rule...")
+# === New marginal rule (cluster-adaptive) ===
+# per-cluster 20th percentile of confidence + global silhouette threshold
+conf_p20 = np.zeros(k, dtype="float32")
+for c in range(k):
+    idx = (first_idx == c)
+    conf_p20[c] = np.percentile(confidence[idx], 20) if np.any(idx) else 0.5
 
-print(f"  Mean distance to center: {distances_to_center.mean():.2f}")
-print(f"  Mean distance to nearest other: {distances_to_nearest_other.mean():.2f}")
-print(f"  Mean confidence ratio: {confidence_ratio.mean():.2f}")
-print(f"  Mean silhouette score: {silhouette_scores.mean():.3f}")
-print(f"  Marginal customers: {is_marginal.sum():,} ({is_marginal.sum()/len(df)*100:.1f}%)")
+is_marginal = (confidence < conf_p20[first_idx]) | (silhouette_scores < 0.10) | (margin_r < 0)
+
+# Store old distance metrics for comparison
+distances_to_center = np.sqrt(first_d2)
+distances_to_nearest_other = np.sqrt(second_d2)
+nearest_other_cluster = second_idx
+
+print(f"\n  Distance Metrics:")
+print(f"    Mean Euclidean distance to assigned: {distances_to_center.mean():.2f}")
+print(f"    Mean Euclidean distance to nearest other: {distances_to_nearest_other.mean():.2f}")
+print(f"    Mean radius-normalised distance (RND): {d1_r.mean():.2f}")
+print(f"    Mean margin (RND): {margin_r.mean():.2f}")
+print(f"\n  Confidence Metrics:")
+print(f"    Mean confidence (soft K-means): {confidence.mean():.3f}")
+print(f"    Median confidence: {np.median(confidence):.3f}")
+print(f"    Mean Mahalanobis distance to assigned: {np.sqrt(d2M_first).mean():.2f}")
+print(f"    Mean gap (Euclidean): {gap_euclid.mean():.2f}")
+print(f"    Mean gap (Mahalanobis): {gap_mahal.mean():.2f}")
+print(f"\n  Quality Metrics:")
+print(f"    Mean silhouette score: {silhouette_scores.mean():.3f}")
+print(f"    Marginal customers (new rule): {is_marginal.sum():,} ({is_marginal.sum()/len(df)*100:.1f}%)")
+print(f"    Criteria: confidence < p20[cluster] OR silhouette < 0.10 OR margin_r < 0")
 
 # ============================================================================
 # 4. Dimensionality Reduction for Visualization
@@ -269,20 +332,21 @@ ax2.set_title('Distribution of Distance to Nearest Other Cluster', fontsize=12, 
 ax2.legend()
 ax2.grid(axis='y', alpha=0.3)
 
-# Panel 3: Confidence ratio
-ax3.hist(confidence_ratio[confidence_ratio < 10], bins=50, color='green', alpha=0.7, edgecolor='black')
-ax3.axvline(confidence_ratio.mean(), color='red', linestyle='--', linewidth=2, label=f'Mean: {confidence_ratio.mean():.2f}')
-ax3.axvline(marginal_threshold_ratio, color='purple', linestyle='--', linewidth=2, label=f'Marginal Threshold: {marginal_threshold_ratio}')
-ax3.set_xlabel('Confidence Ratio (Nearest Other / Assigned)', fontsize=11)
+# Panel 3: Confidence probability (soft K-means)
+ax3.hist(confidence, bins=50, color='green', alpha=0.7, edgecolor='black')
+ax3.axvline(confidence.mean(), color='red', linestyle='--', linewidth=2, label=f'Mean: {confidence.mean():.3f}')
+ax3.axvline(np.median(confidence), color='orange', linestyle='--', linewidth=2, label=f'Median: {np.median(confidence):.3f}')
+ax3.axvline(0.6, color='purple', linestyle='--', linewidth=2, label='Suggested Threshold: 0.6')
+ax3.set_xlabel('Confidence Probability (Soft K-means)', fontsize=11)
 ax3.set_ylabel('Customer Count', fontsize=11)
-ax3.set_title('Confidence Ratio Distribution (capped at 10 for visibility)', fontsize=12, fontweight='bold')
+ax3.set_title('Confidence Probability Distribution [0,1]', fontsize=12, fontweight='bold')
 ax3.legend()
 ax3.grid(axis='y', alpha=0.3)
 
 # Panel 4: Silhouette scores
 ax4.hist(silhouette_scores, bins=50, color='purple', alpha=0.7, edgecolor='black')
 ax4.axvline(silhouette_scores.mean(), color='red', linestyle='--', linewidth=2, label=f'Mean: {silhouette_scores.mean():.3f}')
-ax4.axvline(marginal_threshold_silhouette, color='orange', linestyle='--', linewidth=2, label=f'Marginal Threshold: {marginal_threshold_silhouette}')
+ax4.axvline(0.10, color='orange', linestyle='--', linewidth=2, label='Marginal Threshold: 0.10')
 ax4.set_xlabel('Silhouette Score', fontsize=11)
 ax4.set_ylabel('Customer Count', fontsize=11)
 ax4.set_title('Silhouette Score Distribution', fontsize=12, fontweight='bold')
@@ -391,7 +455,7 @@ plt.close()
 # ============================================================================
 print("\n[6/7] Creating Power BI datasets...")
 
-# Dataset 1: Customer-level scatter data
+# Dataset 1: Customer-level scatter data (with calibrated confidence metrics)
 print("  Dataset 1: customer_scatter_data.csv...")
 customer_scatter = pd.DataFrame({
     'CUSTOMER_ID': df['CUSTOMER_ID'],
@@ -401,12 +465,23 @@ customer_scatter = pd.DataFrame({
     'pca_y': X_pca[:, 1],
     'tsne_x': X_tsne[:, 0],
     'tsne_y': X_tsne[:, 1],
-    'distance_to_center': distances_to_center,
-    'distance_to_nearest_other': distances_to_nearest_other,
+    # Original Euclidean distances
+    'dist_assigned': distances_to_center.astype("float32"),
+    'dist_nearest_other': distances_to_nearest_other.astype("float32"),
     'nearest_other_cluster': nearest_other_cluster,
-    'confidence_ratio': confidence_ratio,
-    'silhouette_score': silhouette_scores,
-    'is_marginal': is_marginal,
+    'silhouette_score': silhouette_scores.astype("float32"),
+    # New calibrated metrics
+    'rnd_assigned': d1_r,                 # radius-normalised distance (lower = better)
+    'rnd_nearest_other': d2_r,
+    'margin_r': margin_r,                 # >0 indicates safe boundary
+    'mahalanobis_first': np.sqrt(d2M_first),
+    'mahalanobis_second': np.sqrt(d2M_second),
+    'gap_euclid': gap_euclid,
+    'gap_mahal': gap_mahal,
+    'confidence_prob': confidence,        # [0,1]; recommend 0.6-0.7 as threshold
+    'alt_label_from_prob': alt_label,
+    'is_marginal': is_marginal.astype(bool),
+    # Explanatory columns
     'CUSTOMER_SEGMENT': df['CUSTOMER_SEGMENT'],
     'CUSTOMER_PORTFOLIO': df['CUSTOMER_PORTFOLIO'],
     'ACTIVE_CUSTOMER': df['ACTIVE_CUSTOMER'],
@@ -421,6 +496,7 @@ customer_scatter = pd.DataFrame({
 })
 customer_scatter.to_csv(OUTPUT_DIR / "customer_scatter_data.csv", index=False)
 print(f"    Saved: customer_scatter_data.csv ({len(customer_scatter):,} rows)")
+print(f"      New columns: rnd_assigned, margin_r, mahalanobis_*, gap_*, confidence_prob")
 
 # Dataset 2: Cluster centers
 print("  Dataset 2: cluster_centers.csv...")
@@ -447,7 +523,7 @@ cluster_centers_df = cluster_centers_df.merge(cluster_summary, on='cluster', how
 cluster_centers_df.to_csv(OUTPUT_DIR / "cluster_centers.csv", index=False)
 print(f"    Saved: cluster_centers.csv ({len(cluster_centers_df)} rows)")
 
-# Dataset 3: Cluster metadata (for slicers)
+# Dataset 3: Cluster metadata (for slicers, with calibrated confidence metrics)
 print("  Dataset 3: cluster_metadata.csv...")
 cluster_metadata = df.groupby('cluster').agg({
     'CUSTOMER_ID': 'count',
@@ -455,14 +531,20 @@ cluster_metadata = df.groupby('cluster').agg({
 }).reset_index()
 cluster_metadata.columns = ['cluster', 'customer_count', 'mean_cltv', 'median_cltv', 'std_cltv']
 
-# Calculate mean silhouette score per cluster separately
-silhouette_by_cluster = []
+# Calculate cluster-level metrics (silhouette, confidence, RND, marginal)
+cluster_stats = []
 for c in sorted(df['cluster'].unique()):
     mask = labels == c
-    mean_sil = silhouette_scores[mask].mean()
-    silhouette_by_cluster.append({'cluster': c, 'mean_silhouette': mean_sil})
-silhouette_df = pd.DataFrame(silhouette_by_cluster)
-cluster_metadata = cluster_metadata.merge(silhouette_df, on='cluster', how='left')
+    cluster_stats.append({
+        'cluster': c,
+        'mean_silhouette': float(silhouette_scores[mask].mean()),
+        'p20_confidence': float(np.percentile(confidence[mask], 20)) if mask.any() else None,
+        'median_rnd': float(np.median(d1_r[mask])) if mask.any() else None,
+        'marginal_count': int(is_marginal[mask].sum()),
+        'marginal_pct': float((is_marginal[mask].mean() * 100.0) if mask.any() else 0.0)
+    })
+stats_df = pd.DataFrame(cluster_stats)
+cluster_metadata = cluster_metadata.merge(stats_df, on='cluster', how='left')
 
 # Add cluster labels
 cluster_labels = {
@@ -481,14 +563,9 @@ cluster_metadata['cluster_display'] = cluster_metadata.apply(
     lambda row: f"C{row['cluster']} - {row['cluster_label']}", axis=1
 )
 
-# Add marginal customer count per cluster
-marginal_counts = df[is_marginal].groupby('cluster').size().reset_index(name='marginal_count')
-cluster_metadata = cluster_metadata.merge(marginal_counts, on='cluster', how='left')
-cluster_metadata['marginal_count'] = cluster_metadata['marginal_count'].fillna(0).astype(int)
-cluster_metadata['marginal_pct'] = (cluster_metadata['marginal_count'] / cluster_metadata['customer_count'] * 100).round(1)
-
 cluster_metadata.to_csv(OUTPUT_DIR / "cluster_metadata.csv", index=False)
 print(f"    Saved: cluster_metadata.csv ({len(cluster_metadata)} rows)")
+print(f"      New columns: p20_confidence, median_rnd, marginal_pct")
 
 # Dataset 4: Marginal customers list
 print("  Dataset 4: marginal_customers.csv...")
@@ -509,7 +586,10 @@ summary_stats = {
     'mean_distance_to_center': distances_to_center.mean(),
     'median_distance_to_center': np.median(distances_to_center),
     'mean_distance_to_nearest_other': distances_to_nearest_other.mean(),
-    'mean_confidence_ratio': confidence_ratio.mean(),
+    'mean_rnd': d1_r.mean(),
+    'mean_margin_r': margin_r.mean(),
+    'mean_confidence': confidence.mean(),
+    'median_confidence': np.median(confidence),
     'mean_silhouette': silhouette_scores.mean(),
     'marginal_customers': is_marginal.sum(),
     'marginal_pct': (is_marginal.sum() / len(df) * 100),
@@ -517,22 +597,26 @@ summary_stats = {
 }
 
 print("\n" + "="*80)
-print("DISTANCE ANALYSIS SUMMARY")
+print("DISTANCE ANALYSIS SUMMARY (Calibrated Metrics)")
 print("="*80)
 print(f"Total customers: {summary_stats['total_customers']:,}")
 print(f"Number of clusters: {summary_stats['num_clusters']}")
-print(f"\nDistance Metrics:")
+print(f"\nEuclidean Distance Metrics:")
 print(f"  Mean distance to assigned cluster: {summary_stats['mean_distance_to_center']:.2f}")
 print(f"  Median distance to assigned cluster: {summary_stats['median_distance_to_center']:.2f}")
 print(f"  Mean distance to nearest other cluster: {summary_stats['mean_distance_to_nearest_other']:.2f}")
-print(f"  Mean confidence ratio: {summary_stats['mean_confidence_ratio']:.2f}")
+print(f"\nCalibrated Confidence Metrics:")
+print(f"  Mean radius-normalised distance (RND): {summary_stats['mean_rnd']:.2f}")
+print(f"  Mean margin (RND): {summary_stats['mean_margin_r']:.2f} (>0 = safe boundary)")
+print(f"  Mean confidence (soft K-means): {summary_stats['mean_confidence']:.3f}")
+print(f"  Median confidence: {summary_stats['median_confidence']:.3f}")
 print(f"\nQuality Metrics:")
 print(f"  Mean silhouette score: {summary_stats['mean_silhouette']:.3f}")
 print(f"  PCA variance explained: {summary_stats['pca_variance_explained']:.1f}%")
-print(f"\nMarginal Customers:")
+print(f"\nMarginal Customers (Cluster-Adaptive Rule):")
 print(f"  Count: {summary_stats['marginal_customers']:,}")
 print(f"  Percentage: {summary_stats['marginal_pct']:.1f}%")
-print(f"  Criteria: Silhouette < {marginal_threshold_silhouette} OR Confidence ratio < {marginal_threshold_ratio}")
+print(f"  Criteria: confidence < p20[cluster] OR silhouette < 0.10 OR margin_r < 0")
 
 print("\nPer-Cluster Breakdown:")
 print("-" * 80)

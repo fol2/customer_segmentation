@@ -71,6 +71,9 @@ def parse_args():
     p.add_argument("--svd-components", type=int, help="TruncatedSVD components for discretised recipe (e.g., 24)")
     p.add_argument("--silhouette-sample-size", type=int, default=15000, help="Sample size for silhouette computation")
     p.add_argument("--kselect-sample-size", type=int, default=30000, help="Sample size for k-selection")
+    p.add_argument("--pca-whiten", action="store_true", help="Enable PCA whitening for continuous recipe (orthogonalizes feature space)")
+    p.add_argument("--pca-variance", type=float, default=0.95, help="Variance to retain for PCA whitening (default: 0.95)")
+    p.add_argument("--kmeans-n-init", type=int, default=10, help="KMeans n_init parameter (default: 10)")
     return p.parse_args()
 
 def main():
@@ -140,7 +143,11 @@ def main():
         scaler=args.scaler,
         log1p_columns=log_cols,
         svd_components=args.svd_components,
+        pca_whiten=args.pca_whiten,
+        pca_variance=args.pca_variance,
     )
+    if args.pca_whiten:
+        print(f"      PCA whitening enabled (variance threshold: {args.pca_variance})")
     pipe, feature_names = build_feature_pipeline(fcfg)
     print(f"[5/9] Transforming features ({len(fcfg.numeric_features)} features)...")
     X = pipe.fit_transform(df)
@@ -161,6 +168,7 @@ def main():
         mbk_batch_size=args.mbk_batch_size,
         mbk_max_iter=args.mbk_max_iter,
         k_select_sample_size=args.kselect_sample_size,
+        kmeans_n_init=args.kmeans_n_init,
     )
     model, labels = fit_cluster_model(X, ccfg)
     print(f"      Clustering complete! Found {len(set(labels))} clusters")

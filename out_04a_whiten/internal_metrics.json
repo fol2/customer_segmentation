@@ -1,0 +1,6 @@
+{
+  "n_clusters": 9,
+  "silhouette": 0.35789424054348656,
+  "calinski_harabasz": 50408.080955811834,
+  "davies_bouldin": 1.021332918666217
+}
